@@ -12,11 +12,6 @@ extern "C" {
     static __bss_end: u8;
 }
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
-}
-
 unsafe fn memset(buf: *mut u8, value: u8, len: usize) {
     (0..len).for_each(|i| *buf.add(i) = value);
 }
@@ -104,6 +99,21 @@ macro_rules! print {
     }};
 }
 
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    if let Some(location) = info.location() {
+        print!(
+            "PANIC: {}:{}: {}\n",
+            location.file(),
+            location.line(),
+            info.message()
+        );
+    } else {
+        print!("PANIC: {}\n", info.message());
+    }
+    loop {}
+}
+
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
     // Zero-clear the .bss section.
@@ -117,10 +127,6 @@ pub extern "C" fn kernel_main() -> ! {
     // Print to console.
     print!("\n\nHello {}\n", "World!");
     print!("1 + 2 = {}, {:#x}\n", 1 + 2, 0x1234abcd);
-
-    // if let Err(_) = sbi_call(0, 0, 0, 0, 0, 0, 42, 42) {
-    //     print!("Error!");
-    // }
 
     loop {}
 }
