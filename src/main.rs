@@ -8,19 +8,21 @@ use core::arch::{asm, naked_asm};
 use core::fmt;
 use core::mem::transmute;
 use core::panic::PanicInfo;
+use core::ptr::write_bytes;
+
+const PAGE_SIZE: usize = 4096;
 
 extern "C" {
     static __stack_top: u8;
     static mut __bss: u8;
     static __bss_end: u8;
-}
-
-unsafe fn memset(buf: *mut u8, value: u8, len: usize) {
-    (0..len).for_each(|i| *buf.add(i) = value);
+    static mut __free_ram: u8;
+    static mut __free_ram_end: u8;
 }
 
 #[repr(i32)]
 #[derive(Debug)]
+#[allow(dead_code)]
 enum SbiError {
     Failed = -1,
     NotSupported = -2,
@@ -43,6 +45,7 @@ impl From<SbiError> for fmt::Error {
     }
 }
 
+#[allow(dead_code)]
 struct SbiValue(i32);
 
 type SbiResult = Result<SbiValue, SbiError>;
@@ -121,6 +124,7 @@ macro_rules! write_csr {
 }
 
 #[repr(packed)]
+#[allow(dead_code)]
 struct TrapFrame {
     ra: u32,
     gp: u32,
@@ -258,6 +262,21 @@ extern "C" fn handle_trap(_frame: &TrapFrame) {
     );
 }
 
+#[allow(static_mut_refs)]
+fn alloc_pages(n: usize) -> &'static mut [u8] {
+    static mut NEXT_PADDR: &'static mut u8 = unsafe { &mut __free_ram };
+    unsafe {
+        let paddr: *mut u8 = NEXT_PADDR;
+        let next_paddr = paddr.add(n * PAGE_SIZE);
+        NEXT_PADDR = &mut *next_paddr;
+        if next_paddr > (&mut __free_ram_end) as *mut u8 {
+            panic!("out of memory");
+        }
+        write_bytes(paddr, 0, n * PAGE_SIZE);
+        core::slice::from_raw_parts_mut(paddr, n * PAGE_SIZE)
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
     // Zero-clear the .bss section.
@@ -265,16 +284,15 @@ pub extern "C" fn kernel_main() -> ! {
         let bss = &raw mut __bss;
         let bss_end = &raw const __bss_end;
         let len = bss_end as usize - bss as usize;
-        memset(bss, 0, len);
+        write_bytes(bss, 0, len);
     }
 
     // Register exception handler.
     write_csr!(stvec, kernel_entry as u32);
 
-    // Test exception handler.
-    unsafe {
-        asm!("unimp");
-    }
+    alloc_pages(1 << 14);
+    print!("OK!\n");
+    alloc_pages(1);
 
     loop {}
 }
